@@ -1,0 +1,2994 @@
+;Clock project starte March 2023, Built 3 clocks with dedications for Horia, Andreea and Narcisa
+; the diference in the clocks is the birth day message and time zone adjusment
+;working with DS 1744 it is important to write before a 1 in WR bit to hold the clock update in order to write the new info
+;r22 MSB HOUR r23 LSB HOUR, r24 MSB MINUTES,r25 LSB MINUTES, r26 A counter, r27 H counter, r28 V counter
+; r30 MSB DATE, r29 LSB DATE, r31 day, r20, r21 MONTH
+;first initialize the clock with the hour of your first zone and after that reprogramm the micro to jump over the initialization routine after each reset or power cycle
+.include "8535def.inc"
+.org	0x00
+	rjmp Reset				; Reset-Address	rjmp	Reset
+.org	INT0addr			; External Interrupt Request 0
+	reti
+.org	INT1addr			; External Interrupt Request 1
+	reti
+.org	OC2addr 			; Timer/Counter2 Compare Match
+	reti
+.org	OVF2addr			; Timer/Counter2 Overflow
+	reti
+.org	ICP1addr			; Timer/Counter1 Capture Event 
+	reti
+.org	OC1Aaddr			; Timer/Counter1 Compare Match A
+	reti
+.org	OC1Baddr			; Timer/Counter1 Compare Match B
+	reti
+.org	OVF1addr			; Timer/Counter1 Overflow
+	reti
+.org	OVF0addr			; Timer/Counter0 Overflow
+	reti
+.org	SPIaddr 			; SPI Serial Transfer Complete
+	reti
+.org	URXCaddr			; UART, Rx Complete
+	reti
+.org	UDREaddr			; UART Data Register Empty
+	reti
+.org	UTXCaddr			; UART, Tx Complete
+	reti
+.org	ADCCaddr			; ADC Conversion Complete
+	reti
+.org	ERDYaddr			; EEPROM Ready
+	reti
+.org	ACIaddr 			; Analog Comparator
+	reti
+
+;*** Begin of Program Execution ***
+Reset:
+	ldi r16,low(RAMEND)
+	out SPL,r16
+	ldi r16,high(RAMEND)
+	out SPH,r16
+
+	ldi r16,0xFF
+	out WDTCR, r16	;enable watch dog reset timer for 2s
+
+; Set PORT C as output and DATA register
+	ldi	r17,0xFF
+	out	DDRC,r17
+; Clear PORTC
+	ldi r17, 0x00
+	out PORTC,r17
+;Set PORT B as output EXCEPT PB0 WHICH IS USED FOR DAY LIGHT SAVING SW
+	ldi r17,0xFE
+	out DDRB,r17
+;Clear PORTB outputs AND ENABLE PULL UP RESISTOR ON PB0
+	ldi r17,0x01
+	out PORTB,r17
+; Set PORT D as an output for CLOCK address
+	ldi r17,0xFF
+	out DDRD,r17
+; clear outputs
+	ldi r17,0x00
+	out PORTD,r17
+; Set PORT A as output
+	ldi r17,0xFF
+	out DDRA,r17
+; Clear PORT A 
+	ldi r17,0xFE ;(clearing means no WR to the devices or CE activated except the output for buzzer
+	out PORTA,r17
+
+	sbi PORTA,1	; Set light dispaly ON
+
+	sbi PORTA,2	;disable CE clock
+	sbi PORTA,3	;disable OE of the clock
+	sbi PORTA,4	;enable reading from the clock
+
+	sbi PORTB,6	;initialize flag for BUZER
+
+;	cbi PORTB,5	;clear flag for AFTERNOON
+;	cbi PORTB,4	;clear flag for MORNING
+
+	sbis PINB,0		;test position of day light saving SW and enable buzer accordingly
+	cbi PORTB,6
+	sbic PINB,0
+	sbi PORTB,6
+	cbi PORTB,7		;activate reading calendar on POWER UP
+
+;erase_display:	;routine to set up and erase display	
+	cbi PORTA,7	;Set CLOCK for display to high
+	cbi PORTA,6	;Select write to display
+	sbi PORTA,5	;Enable CE of the display select to low
+	ldi r17,0x38	;set display for 8 bit, 2 lines, 5x7
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0x01	;erase display and go home
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0x0E	;display ON, cursor ON, cursor not blinking
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	sbi PORTA,5
+	rcall short_delay
+	ldi r17,0x06	;entry mode increment cursor position, no display shift
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+
+	sbi PORTA,6
+	sbi PORTA,5
+	sbi PORTA,7		;disable display CE
+
+;Initialize time to the clock
+
+    sbi PORTA,2	;disable CE clock
+	sbi PORTA,3	;disable OE of the clock
+	sbi PORTA,4	;enable reading from the clock
+
+	sbi PORTA,6		; disable writing to the display
+	sbi PORTA,7
+	sbi PORTA,5
+;#######################################################################################
+rjmp read_time		;this jump is not to program the CLOCK every time you power up or reset the micro
+;########################################################################################
+; Set PORT C as output and DATA register and clear the outputs
+	ldi	r17,0xFF
+	out	DDRC,r17
+	nop
+	nop
+	ldi r17,0x00
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x80	;load DATA register with 0x00
+	ldi r16,0xF8	;prepare the clock for writing W=1 control register
+	out PORTD,r16	;PORT D address port
+	out PORTC,r17	;PORT C DATA port
+	nop
+	nop
+	rcall short_delay
+		
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+		
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2
+	sbi PORTA,3
+	sbi PORTA,4
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x23	;load DATA register with 0x23	
+	ldi r16,0xFF	;set address for YEARS 7FFF
+	out PORTD,r16
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+		
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR=1
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x04	;load DATA register with 0x00	
+	ldi r16,0xFE	;set address for MONTH 7FFE
+	out PORTD,r16
+	out PORTC, r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0	
+
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR=1
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x01	;load DATA register r30 with 0xDAY OF THE MONTH	
+	ldi r16,0xFD	;set address for DAY of the MONTH
+	out PORTD,r16
+	out PORTC, r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0	
+
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR=1
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x07	;load DATA register r30 with 0xDAY OF THE WEEK	
+	ldi r16,0xFC	;set address for DAY of the WEEK
+	out PORTD,r16
+	out PORTC, r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0	
+
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR=1
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x05	;load DATA register r30 with 0xHOURS DECIMAL FORMAT	
+	ldi r16,0xFB	;set address for HOURS
+	out PORTD,r16
+	out PORTC, r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR=1
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x22	;load DATA register r30 with 0xMINUTES IN DECIMAL FORMAT	
+	ldi r16,0xFA	;set address for MINUTES
+	out PORTD,r16
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+		
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR
+		
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x00	;clear seconds registe
+	ldi r16,0xF9	;F8 the address for control register and century
+	out PORTD,r16
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+
+	rcall short_delay
+	rcall short_delay
+
+	sbi PORTA,2		; disable CE for the clock
+	sbi PORTA,4		; disable writing to the clock WR
+		
+
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x00	;load DATA register with 0x00
+	ldi r16,0xF8	;reset control register
+	out PORTD,r16	;PORT D address port
+	out PORTC,r17	;PORT C DATA port
+	nop
+	nop
+	rcall short_delay
+		
+	cbi PORTA,2		; enable CE=0 for the clock
+	cbi PORTA,4		; enable writing to the clock WR=0
+		
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2
+	sbi PORTA,3
+	sbi PORTA,4
+	rcall short_delay
+; Here STOPS the writing to the clock
+;rjmp stop_1
+; Set PORT C as input and DATA register
+
+							;READ TIME FROM HERE (JUST HOUR AND MINUTES)
+;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+read_time:
+	sbi PORTA,5
+	sbi PORTA,6		; disable writing to the LCD display
+	sbi PORTA,7
+;	cbi PORTB,4
+;	cbi PORTB,5	; clear greeting flags PB 4 and PB 5
+;read hours first
+; Set PORT C as input
+; Enable pullup resistors on PORTC
+	ldi	r17,0x00
+	out	DDRC,r17
+	nop
+	nop
+	ldi r17, 0xFF	;activate pull up resistors
+	out PORTC,r17
+	nop
+	nop
+	ldi r16,0xFB	;set address to read HOURS from the clock FB
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+	nop
+	nop
+
+	rcall short_delay
+	rcall short_delay
+	
+	in r22, PINC
+	in r23, PINC
+
+;____________________________________________________________________________________
+		                      ;TEST HOURS
+;	ldi r22,0x23
+;	ldi r23,0x23
+;_____________________________________________________________________________________	 
+	cpi r22,0x05
+	brsh ok_no_flag	;SETING UP THE FLAG FOR TIME ZONE DIFERENCE DATE ADJUSTMENT
+	sbi PORTB,7
+;_____________________________________________________________________________________
+ok_no_flag:
+ 	;cpi r22,0x17
+	;brsh afternoon
+	;sbi PORTB,5		;set flag for GOOD MORNING
+	nop
+	nop
+;afternoon:
+	;sbis PINB,5	;skip afternoon if morning was activated
+	;sbi PORTB,4		; set flag GOOD AFTERNOON
+;	sbis PINB,7	; skip to clear the flag for zone diference if was activated here
+;	cbi PORTB,7	;clear flag for reading the calendar	
+	sbis PINB,0
+	inc r22
+	sbis PINB,0
+	inc r23
+	cpi r22,0x0A
+	brne ok_19
+	ldi r22,0x10
+	ldi r23,0x10
+ok_19:
+	cpi r22,0x1A
+	brne ok_24
+	ldi r22,0x20
+	ldi r23,0x20
+ok_24:
+	cpi r22,0x24
+	brne ok_increment			;INCREMENTING THE HOUR FOR DAY LIGHT SAVING TIME
+	ldi r22,0x00
+	ldi r23,0x00
+		
+ok_increment:
+;	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+;rjmp read_time
+;________________________________________________________________________________________
+
+	lsr r22
+	lsr r22
+	lsr r22
+	lsr r22
+	andi r22,0x03
+	ldi r16,0x30
+	or r22,r16
+
+
+
+LSBH:	
+;	ldi r16,0x0F
+	andi r23,0x0F
+	ldi r16,0x30
+	or r23,r16
+;********************************from here down reading MINUTES *******************
+
+	sbi PORTA,4		; set clock for WR 1 reading
+	cbi PORTA,2
+	cbi PORTA,3
+	ldi r16,0xFA	;set address to read MINUTES from the clock FA
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		; enable CE 0 for the clock
+	cbi PORTA,3		; enable OE 0 for the clock
+	rcall short_delay	
+	in r24,PINC
+	in r25,PINC
+;			ldi r24,0x44	;&&&&&&&&&&&&&&&&&&        MINUTES TEST &&&&&&&&&&&&&&&&&&&
+;			ldi r25,0x44
+;&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*&&&&&&&&&&
+	rcall short_delay
+	sbi PORTA,2
+	sbi PORTA,3
+;computing for MSBNM
+	ldi r16,0x30
+	lsr r24
+	lsr r24
+	lsr	r24
+	lsr r24
+	or r24,r16
+;computing for LSBM	
+	ldi r16,0x30
+	andi r25,0x0F
+	or r25,r16
+; HERE ENDS READING TIME FROM THE CLOCK
+										;READ THE CALENDAR
+;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+;read CALENDAR info DAY, DATA, MONTH, YEAR
+
+;test if the flag for DATE ZONE adjustemnt is set
+;	sbic PINB,7		;skip if flag on PB 7 was set by the time zone Bucharest
+;	rjmp update_clock ;FROM HERE TILL THE END OF CLOCK READING SALT TO COMPENSATE THE TIME ZONE FOR DATE
+;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	sbi PORTA,2		;CE clock
+	sbi PORTA,3		;OE clock
+	sbi PORTA,4		;WR clock
+
+
+	ldi r16,0xFC	;set address to read DAY OF THE WEEK from the clock FC
+	out PORTD,r16
+
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+
+	rcall short_delay
+	rcall short_delay
+	
+	in r31, PINC
+;____________________________________________________________________________
+;	ldi r31,0x15		TEST THE day OF THE WEEK numbers from 01 to 07 01=Sunday
+;_____________________________________________________________________________
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+	
+	ldi r16,0x30
+	andi r31,0x07
+	or r31,r16		;register R31 reserved for DAY of the week
+
+;above reading routine for the DAY OF THE WEEK
+
+		; r29, r30 registers for the DAY of the month IN THE CALENDAR in character format
+	ldi r16,0xFD	;set address to read DAY IN THE CALENDAR from the clock FC
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+
+	rcall short_delay
+	rcall short_delay	
+	in r30, PINC
+	in r29, PINC
+	;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+;	ldi r30,0x13		;TEST BIRTH DAYS INFO for DAY load same info in r30 and r29
+;	ldi r29,0x13
+	;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+	
+	ldi r16,0x30
+	lsr r30
+	lsr r30
+	lsr	r30
+	lsr r30
+	or r30,r16		;r30 register reserved for MSB DATE of the month
+
+	ldi r16,0x30
+	andi r29,0x0F
+	or r29,r16		;register r29 reserved for LSB DATE of the month
+
+;above routine for reading day of the month
+
+
+;under routine for reading the month of the year
+
+			;r21 register reserved for MSB MONTH
+			;r20 register reserved for LSB MONTH
+	ldi r16,0xFE	;set address to read MONTH from the clock FE
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+
+	rcall short_delay
+	rcall short_delay
+	
+	in r21, PINC
+	in r20, PINC
+	;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+;	ldi r21,0x02		;TEST BIRTH DAYS INFO for MONTH enter same data in r21 and r20
+;	ldi r20,0x02
+	;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+	
+	ldi r16,0x30
+	lsr r21
+	lsr r21
+	lsr	r21
+	lsr r21
+	or r21,r16		;r30 register reserved for MSB Month
+	
+	ldi r16,0x30
+	andi r20,0x0F
+	or r20,r16		;register r29 reserved for LSB Month
+
+;above routine for reading the month of the year
+			;r18 register reserved for MSB YEAR
+			;r19 register reserved for LSB YEAR
+	ldi r16,0xFF	;set address to read MONTH from the clock FE
+	out PORTD,r16
+
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+
+	rcall short_delay
+	rcall short_delay
+;	ldi r30,0x15
+;	ldi r31,0x15	
+	in r18, PINC
+	in r19, PINC
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+	
+	ldi r16,0x30
+	lsr r18
+	lsr r18
+	lsr	r18
+	lsr r18
+	or r18,r16		;r18 register reserved for MSB YEAR
+	
+	ldi r16,0x30
+	andi r19,0x0F
+	or r19,r16		;register r19 reserved for LSB YEAR
+;					TIME AND CALENDAR READING ENDS HERE
+;!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+update_clock:
+;Set PORT C as output to work with the display
+	sbi PORTA,2
+	sbi PORTA,3		; disable reading from the CLOCK 
+	sbi PORTA,4
+	
+	sbi PORTA,5
+	sbi PORTA,6		; disable writing to the LCD display
+	sbi PORTA,7
+
+	ldi	r17,0xFF
+	out	DDRC,r17
+; Clear PORTC
+	ldi r17, 0x00
+	out PORTC,r17
+;loop:
+;	out PORTC,r23
+
+;	cbi PORTA,6	;Select write to display
+;	cbi PORTA,7	;Enable RS of the display select to low
+
+	rcall short_delay
+	; Set PORT C as output and DATA register
+;	ldi	r17,0xFF
+;	out	DDRC,r17			
+;	rcall short_delay
+	
+
+
+;here enter the time to test the time zone routine
+
+;	ldi r22,0x32 ;load MSB Hour for  bucharest
+;	ldi r23,0x30 ;load LSB Hour for  bucharest
+
+	ldi r26,0x02	;amsterdam counter
+	ldi r27,0x06	;halifax counter
+	ldi r28,0x05	;vancouver counter
+
+;	ldi	r24,0x30 ;load MSB Minutes with 0
+;	ldi r25,0x30 ;load LSB Minutes with 0 
+
+
+
+
+	rcall erase_display
+	rcall write_Bucharest
+
+	rcall write_hours
+
+	ldi r16,0x3A	;write dots: to display
+	rcall write
+
+	rcall write_minutes
+
+	rcall next_line
+	
+	rcall write_Amsterdam
+A_1:		
+	dec r26
+	cpi r26,0x00
+	brne adjust_1_1
+
+	rcall change_MSBH
+	rcall change_LSBH
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes
+	rcall short_delay
+	rcall home
+	rcall write_Halifax
+H_1:		
+	dec r27
+	cpi r27,0x00
+	brne adjust_2_1
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+;	cpi r22,0x30
+;	brne next_6
+;	cpi r23,0x30
+;	brne next_6
+;	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by HALIFAX time zone
+
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	rcall change_MSBH
+	rcall change_LSBH
+
+	rcall greeting
+
+	rcall time_zone
+
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes
+	rcall next_line
+
+	rcall write_Coquitlam
+
+V_1:		
+	dec r28
+	cpi r28,0x00
+	brne adjust_3_1
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++	
+;	cpi r22,0x30
+;	brne next_6
+;	cpi r23,0x30
+;	brne next_6
+;	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by Coquitlam time zone
+;next_6:
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++	
+	rcall change_MSBH
+	rcall change_LSBH
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes
+	rcall short_delay
+	rcall home
+;writing info about the calendar
+	rcall write_day
+	rcall next_line
+	sbis PINB,7		
+	rcall test_day
+	sbic PINB,7
+	rcall test_prev_day_coquitlam
+	rcall short_delay
+	rcall home
+
+	rcall write_calendar
+	rcall next_line
+	rcall write_date
+	rcall short_delay
+;here is where I test the birthday display messages
+;	sbi PORTB,1		;andreea
+;	sbi PORTB,2		;horia
+;	sbi PORTB,3		;narcisa
+;	sbi PORTB,4		;cristian
+;return_day_ahead_romania
+	rcall home
+;	sbic PINB,4
+;	rcall write_good_morning
+;	rcall home
+;	sbic PINB,5
+;	rcall write_good_afternoon
+;***********************************************************************
+;	in r16,PINB
+;	cpi r16,0x00
+;	breq line_change
+	
+	sbic PINB,1
+	rcall write_birthday
+;	sbic PINB,2
+;	rcall write_birthday
+;	sbic PINB,3
+;	rcall write_birthday
+	
+;									BIRTHDAY MESSAGES PINB,1 Andreea, PINB,2 Horia
+;***********************************************************************************
+;line_change:
+;	rcall next_line
+	sbic PINB,1
+	rcall write_Andreea
+;	sbic PINB,2
+;	rcall write_Horia
+;	sbic PINB,3
+;	rcall write_Narcisa
+;	sbic PINB,4
+;	rcall write_Cristian
+;	rcall home
+  	sbic PINB,1
+	rcall write_love
+;	sbic PINB,2
+;	rcall write_love
+;	rcall next_line
+	sbic PINB,1
+	rcall write_gift_date
+;***************************************************************************	
+
+	rcall home
+	rcall write_update_time
+;back_track:
+	rcall home
+	sbis PINB,0
+	rcall write_day_light_saving	;DAY LIGHT SAVING MESSAGES testing SW on PA 0
+	sbic PINB,0
+	rcall write_winter_hour
+	rcall home
+;*****************************************************************************
+	rcall commandments
+	rjmp read_time
+
+adjust_1_1:
+rjmp adjust_1
+
+adjust_2_1:
+rjmp adjust_2
+
+adjust_3_1:
+	rjmp adjust_3
+greeting:
+	cpi r22,0x31	;test for 12 a clock to change greeting from morning to afternoon
+	brlo next_6
+	cpi r23,0x32
+	brlo next_6
+	sbi PORTB,4
+next_6:
+	ret
+time_zone:
+	cpi r22,0x30
+	brne next_16
+	cpi r23,0x30
+	brne next_16
+	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by Coquitlam time zone
+	cbi PORTB,4		;clear flag for afternoon greeting
+next_16:
+	ret
+
+
+next_1:
+	cpi r22,0x32
+	breq d_LSBH
+	cpi r22,0x31
+	breq d_LSBH_1
+;d_LSBH:
+	dec r23
+	rjmp A_1
+adjust_1:
+	cpi r23,0x30
+	breq t_HSBH
+	rjmp next_1
+t_HSBH:
+	cpi r22,0x30
+	breq LSBH_39_24
+	cpi r22,0x31
+	breq d_MSBH
+	cpi r22,0x32
+	breq LSBH_39_d
+
+   
+LSBH_34:
+	cpi r23,0x34
+	brne d_LSBH
+LSBH_39:
+	ldi r22,0x32
+LSBH_39_d:
+	ldi r23,0x39
+	dec r22
+	rjmp A_1 
+d_LSBH:
+	dec r23
+	rjmp A_1
+d_MSBH:
+	dec r22
+	ldi r23,0x39
+	rjmp A_1
+LSBH_39_24:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp A_1
+d_LSBH_1:
+	dec r23
+	rjmp A_1
+
+next_2:
+	cpi r22,0x32
+	breq d_LSBH_2
+	cpi r22,0x31
+	breq d_LSBH_2
+;d_LSBH:
+	dec r23
+	rjmp H_1
+adjust_2:
+	cpi r23,0x30
+	breq t_HSBH_2
+	rjmp next_2
+t_HSBH_2:
+	cpi r22,0x30
+	breq LSBH_39_24_2
+	cpi r22,0x32
+	breq LSBH_39_d_2
+	cpi r22,0x31
+	breq d_MSBH_2
+   
+LSBH_34_2:
+	cpi r23,0x34
+	brne d_LSBH_2
+LSBH_39_2:
+	ldi r22,0x32
+LSBH_39_d_2:
+	ldi r23,0x39
+	dec r22
+	rjmp H_1 
+d_LSBH_2:
+	dec r23
+	rjmp H_1
+d_MSBH_2:
+	ldi r23,0x39
+	dec r22
+	rjmp H_1
+LSBH_39_24_2:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp H_1
+
+
+V_1_1:
+	rjmp V_1
+
+next_3:
+	cpi r22,0x32
+	breq d_LSBH_3
+	cpi r22,0x31
+	breq d_LSBH_3
+;d_LSBH:
+	dec r23
+	rjmp V_1
+adjust_3:
+	cpi r23,0x30
+	breq t_HSBH_3
+	rjmp next_3
+t_HSBH_3:
+	cpi r22,0x30
+	breq LSBH_39_24_3
+	cpi r22,0x32
+	breq LSBH_39_d_3
+	cpi r22,0x31
+	breq LSBH_39_d_3
+   
+LSBH_34_3:
+	cpi r23,0x34
+	brne d_LSBH_3
+LSBH_39_3:
+	ldi r22,0x32
+LSBH_39_d_3:
+	ldi r23,0x39
+	dec r22
+	rjmp V_1 
+d_LSBH_3:
+	dec r23
+	rjmp V_1
+d_MSBH_3:
+	dec r22
+	rjmp V_1
+LSBH_39_24_3:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp V_1
+
+read_time1:
+	rjmp read_time
+
+change_LSBH:
+	ori r23,0x30
+	mov r16,r23		;write LSBH to display
+	rcall write
+	ret
+
+change_MSBH:
+	mov r16,r22		;write MSBH to display
+	rcall write
+	ret
+
+
+
+erase_display:	;routine to erase display	
+	sbi PORTA,5	;Set CLOCK for display to high
+	cbi PORTA,6	;Select write to display
+	cbi PORTA,7	;Select register select to low
+	ldi r17,0x38	;set display for 8 bit, 2 lines, 5x7
+	out PORTC,r17
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0x01	;erase display and go home
+	out PORTC,r17
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0x0E	;display ON, cursor ON, cursor not blinking
+	out PORTC,r17
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x06	;entry mode increment cursor position, no display shift
+	out PORTC,r17
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	sbi PORTA,7
+	ret
+
+
+write:
+	sbi PORTA,5	;set CLOCK for display to high
+	sbi PORTA,7	;Select CE to high
+	cbi PORTA,6	;Select write to display
+	nop
+	out PORTC,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	nop
+	cbi PORTA,5	;set CLOCK for display to low
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	ret
+
+short_delay:
+	ldi r17,0x7F
+salt_2:
+	ldi r16,0xFF
+salt_1:
+	dec r16
+	wdr
+	cpi r16,0x00
+	brne salt_1
+	dec r17
+	cpi r17,0x00
+	brne salt_2
+	ret
+
+
+
+home:
+	cbi PORTA,7 	;return cursor to origin
+	sbi PORTA,5
+	cbi PORTA,6	;Select write to display
+	ldi r17,0x01
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	ldi r17,0x0E
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	sbi PORTA,7
+	ret
+
+
+home1:
+	cbi PORTA,7 	;return cursor to origin without erasing data
+	sbi PORTA,5
+	ldi r17,0x02
+	out PORTC,r17
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	sbi PORTA,5
+	sbi PORTA,7
+	rcall short_delay
+	cbi PORTA,7
+	ldi r17,0x0E
+	out PORTC,r17
+	rcall short_delay
+	sbi PORTA,7
+	ret
+
+next_line:
+	sbi PORTA,5
+	cbi PORTA,7	;select display config
+	cbi PORTA,6	;Select write to display
+	ldi r17,0x02	;return home
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0xC0	;change line position 0
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	ldi r17,0x06	;entry mode set
+	out PORTC,r17
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,5
+	rcall short_delay
+	rcall short_delay
+	sbi PORTA,5
+	sbi PORTA,7
+	ret
+
+write_hours:
+	mov r16,r22		;load MSB Hours
+	rcall write
+	mov r16,r23		;load LSB Hours
+	rcall write
+	ret
+
+write_minutes:
+	mov r16,r24		;write MSB Minutes to display
+	rcall write
+	mov r16, r25	;write LSB Minutes to display
+	rcall write
+	ret
+test_day:
+		cpi r31,0x31
+		breq write_sunday_1
+		cpi r31,0x32
+		breq write_monday_1
+		cpi r31,0x33
+		breq write_tuesday_1
+		cpi r31,0x34
+		breq write_wednesday_1
+		cpi r31,0x35
+		breq write_thursday_1
+		cpi r31,0x36
+		breq write_friday_1
+		cpi r31,0x37
+		rjmp write_saturday_1
+		ret
+test_prev_day_coquitlam:
+		cpi r31,0x31
+		breq write_saturday_1
+		cpi r31,0x32
+		breq write_sunday_1
+		cpi r31,0x33
+		breq write_monday_1
+		cpi r31,0x34
+		breq write_tuesday_1
+		cpi r31,0x35
+		breq write_wednesday_1
+		cpi r31,0x36
+		breq write_thursday_1
+		cpi r31,0x37
+		breq write_friday_1
+		ret
+
+
+write_sunday_1:
+	rjmp write_sunday
+write_monday_1:
+	rjmp write_monday
+write_tuesday_1:
+	rjmp write_tuesday
+write_wednesday_1:
+	rjmp write_wednesday
+write_thursday_1:
+	rjmp write_thursday
+write_friday_1:
+	rjmp write_friday
+write_saturday_1:
+	rjmp write_saturday
+
+write_Bucharest:
+	ldi r16,0x42	;write B to display 
+	rcall write
+	ldi r16,0x75	;write u to the display
+	rcall write
+	ldi r16,0x63	;write c to display
+	rcall write
+	ldi r16,0x68	;write h to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+
+
+write_Amsterdam:
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_Halifax:
+	ldi r16,0x48	;write H to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x66	;write f to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x78	;write x to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_romania_ahead:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x49	;write I to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x6F	;write o to the display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+
+
+next_daySU_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Monday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_dayM_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Tuesday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_dayTU_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Wednesday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_dayW_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Thursday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_dayTH_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Friday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_dayF_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Saturday_M
+	ret
+;	rjmp return_day_ahead_romania
+next_daySA_romania:
+	rcall home
+	rcall write_romania_ahead
+	rcall next_line
+	rcall write_Sunday_M
+	ret
+;	rjmp return_day_ahead_romania
+
+write_Day:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x74	;write t to the display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_sunday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x55	;write U to display 
+	rcall write
+	ldi r16,0x4E	;write N to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_daySU_romania
+	ret
+write_sunday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x55	;write U to display 
+	rcall write
+	ldi r16,0x4E	;write N to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_monday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x4D	;write M to display
+	rcall write
+	ldi r16,0x4F	;write O to display 
+	rcall write
+	ldi r16,0x4E	;write N to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_dayM_romania
+	ret
+write_monday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x4D	;write M to display
+	rcall write
+	ldi r16,0x4F	;write O to display 
+	rcall write
+	ldi r16,0x4E	;write N to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_tuesday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x54	;write T to display
+	rcall write
+	ldi r16,0x55	;write U to display 
+	rcall write
+	ldi r16,0x45	;write E to the display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_dayTU_romania
+	ret
+write_tuesday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x54	;write T to display
+	rcall write
+	ldi r16,0x55	;write U to display 
+	rcall write
+	ldi r16,0x45	;write E to the display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_wednesday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x57	;write W to display
+	rcall write
+	ldi r16,0x45	;write E to display 
+	rcall write
+	ldi r16,0x44	;write D to the display
+	rcall write
+	ldi r16,0x4E	;write N to display
+	rcall write
+	ldi r16,0x45	;write E to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_dayW_romania
+	ret
+write_wednesday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x57	;write W to display
+	rcall write
+	ldi r16,0x45	;write E to display 
+	rcall write
+	ldi r16,0x44	;write D to the display
+	rcall write
+	ldi r16,0x4E	;write N to display
+	rcall write
+	ldi r16,0x45	;write E to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_thursday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x54	;write T to display
+	rcall write
+	ldi r16,0x48	;write H to display 
+	rcall write
+	ldi r16,0x55	;write U to the display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_dayTH_romania
+	ret
+write_thursday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x54	;write T to display
+	rcall write
+	ldi r16,0x48	;write H to display 
+	rcall write
+	ldi r16,0x55	;write U to the display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_friday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x46	;write F to display
+	rcall write
+	ldi r16,0x52	;write R to display 
+	rcall write
+	ldi r16,0x49	;write I to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_dayF_romania
+	ret
+write_friday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x46	;write F to display
+	rcall write
+	ldi r16,0x52	;write R to display 
+	rcall write
+	ldi r16,0x49	;write I to the display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_saturday:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x41	;write A to display 
+	rcall write
+	ldi r16,0x54	;write T to the display
+	rcall write
+	ldi r16,0x55	;write U to display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	sbic PINB,7
+	rcall next_daySA_romania
+	ret
+write_saturday_M:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x53	;write S to display
+	rcall write
+	ldi r16,0x41	;write A to display 
+	rcall write
+	ldi r16,0x54	;write T to the display
+	rcall write
+	ldi r16,0x55	;write U to display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+write_calendar:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x64	;write D to display
+	rcall write
+	ldi r16,0x61	;write A to display
+	rcall write
+	ldi r16,0x79	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x69	;write I to display
+	rcall write
+	ldi r16,0x6E	;write N to display 
+	rcall write
+	ldi r16,0x20	;write - to the display
+	rcall write
+	ldi r16,0x63	;write C to display
+	rcall write
+	ldi r16,0x61	;write A to display
+	rcall write
+	ldi r16,0x6C	;write L to display
+	rcall write
+	ldi r16,0x65	;write E to display
+	rcall write
+	ldi r16,0x6E	;write N to display
+	rcall write
+	ldi r16,0x64	;write D to display
+	rcall write
+	ldi r16,0x61	;write A to display
+	rcall write
+	ldi r16,0x72	;write R to display
+	rcall write
+	ret
+
+write_date:
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x3A	;write : to display
+	rcall write
+	mov r16,r30		;write MSB DATE
+;	ldi r16,0x31	;write 1 to display
+	rcall write
+	mov r16,r29		;write LSB DATE
+;	ldi r16,0x39	;write 9 to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x4D	;write M to display 
+	rcall write
+	ldi r16,0x3A	;write : to the display
+	rcall write
+	mov r16,r21		;write MSB MONTH
+;	ldi r16,0x30	;write 0 to display
+	rcall write		;write LSB MONTH
+	mov r16,r20		;write
+;	ldi r16,0x33	;write 3 to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x3A	;write : to display
+	rcall write
+	ldi r16,0x32	;write 2 to display
+	rcall write
+	ldi r16,0x30	;write 0 to display
+	rcall write
+	mov r16,r18		;write last 2 digits of the YEAR
+;	ldi r16,0x32	;write 2 to display
+	rcall write
+	mov r16,r19
+;	ldi r16,0x33	;write 3 to display
+	rcall write
+	rcall Andreea
+;	rcall Horia
+;	rcall Narcisa
+;	rcall Cristian
+	ret
+Andreea:
+	cpi r29,0x33	;test for day 13 LSB first
+	brne no_Andreea
+	cpi r30,0x31
+	brne no_Andreea
+	cpi r20,0x32	;test for 02 month
+	brne no_Andreea
+	cpi r21,0x30
+	brne no_Andreea
+	sbi PORTB,1
+	ret
+no_Andreea:	
+	cbi PORTB,1 
+	ret
+
+
+write_update_time:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x70	;write p to display
+	rcall write
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x74	;write t to display 
+	rcall write
+	ldi r16,0x69	;write i to the display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x67	;write g to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	rcall erase_display
+	rcall read_time_again
+	sbis PINB,4
+	rcall write_good_morning
+;	rcall home
+	sbic PINB,4
+	rcall write_good_afternoon 
+	ret
+
+write_good_morning:
+	rcall erase_display
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x47	;write G to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x64	;write d to display 
+	rcall write
+	ldi r16,0x20	;write - to the display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x67	;write g to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+;	rcall next_line
+	rcall write_Andreea
+	ret
+write_good_afternoon:
+	rcall erase_display
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x47	;write G to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x20	;write - to display 
+	rcall write
+	ldi r16,0x61	;write a to the display
+	rcall write
+	ldi r16,0x66	;write f to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+;	rcall next_line
+	rcall write_Andreea
+	ret
+
+write_day_light_saving:
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x69	;write i to display 
+	rcall write
+	ldi r16,0x67	;write g to the display
+	rcall write
+	ldi r16,0x68	;write h to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x76	;write v to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x67	;write g to display
+	rcall write
+
+	;""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+	sbis PINB,6			;PB6 flag that the buzer was activated once
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	rcall short_delay
+	sbis PINB,6
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	sbi PORTB,6			;	BUZER ROUTINE summer time
+	;""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+	ret
+
+write_winter_hour:
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x77	;write w to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x6e	;write n to display 
+	rcall write
+	ldi r16,0x74	;write t to the display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x68	;write h to display
+	rcall write
+	ldi r16,0x6f	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+;""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+
+	sbic PINB,6			;PB6 flag that the buzer was activated once
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	rcall short_delay
+	sbic PINB,6
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	rcall short_delay
+	sbic PINB,6
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	rcall short_delay
+	sbic PINB,6
+	sbi PORTA,0			;PA0 output for the buzer
+	rcall short_delay
+	cbi PORTA,0
+	cbi PORTB,6			;	BUZER ROUTINE for winter
+;"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+	ret
+write_birthday:
+	ldi r16,0x48	;write H to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x50	;write P to display
+	rcall write
+	ldi r16,0x50	;write P to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display 
+	rcall write
+	ldi r16,0x42	;write B to the display
+	rcall write
+	ldi r16,0x49	;write I to display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x54	;write T to display
+	rcall write
+	ldi r16,0x48	;write H to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x59	;write Y to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+
+write_Andreea:
+	rcall next_line
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x4E	;write N to display 
+	rcall write
+	ldi r16,0x44	;write D to the display
+	rcall write
+	ldi r16,0x52	;write R to display
+	rcall write
+	ldi r16,0x45	;write E to display
+	rcall write
+	ldi r16,0x45	;write E to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+
+
+
+
+write_love:
+	rcall home
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x4C	;write L to display
+	rcall write
+	ldi r16,0x4F	;write O to display 
+	rcall write
+	ldi r16,0x56	;write V to the display
+	rcall write
+	ldi r16,0x45	;write E to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x41	;write A to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_gift_date:
+	rcall next_line
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x32	;write 2 to display
+	rcall write
+	ldi r16,0x32	;write 2 to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x4D	;write M to display
+	rcall write
+	ldi r16,0x41	;write A to display 
+	rcall write
+	ldi r16,0x52	;write R to the display
+	rcall write
+	ldi r16,0x43	;write C to display
+	rcall write
+	ldi r16,0x48	;write H to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x32	;write 2 to display
+	rcall write
+	ldi r16,0x30	;write 0 to display
+	rcall write
+	ldi r16,0x32	;write 2 to display
+	rcall write
+	ldi r16,0x33	;write 3 to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+write_Coquitlam:
+	ldi r16,0x43	;write C to display 
+	rcall write
+	ldi r16,0x6F	;write o to the display
+	rcall write
+	ldi r16,0x71	;write q to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ret
+
+commandments:
+ 	ldi r16,0x4C	;write L to display 
+	rcall write
+	ldi r16,0x6F	;write o to the display
+	rcall write
+	ldi r16,0x76	;write v to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x47	;write G to display
+	rcall write
+	ldi r16,0x4F	;write O to display
+	rcall write
+	ldi r16,0x44	;write D to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x77	;write w to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x68	;write h to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	
+	rcall next_line
+
+	ldi r16,0x61	;write a to display 
+	rcall write
+	ldi r16,0x6C	;write l to the display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x68	;write h to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x61	;write a to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x74	;write t to display
+	rcall write
+	ldi r16,0x2C	;write , to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	
+	rcall home
+
+	ldi r16,0x61	;write a to display 
+	rcall write
+	ldi r16,0x6C	;write l to the display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x73	;write s to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x2C	;write , to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	
+	rcall next_line
+
+	ldi r16,0x61	;write a to display 
+	rcall write
+	ldi r16,0x6C	;write l to the display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x6D	;write m to display
+	rcall write
+	ldi r16,0x69	;write i to display
+	rcall write
+	ldi r16,0x6E	;write n to display
+	rcall write
+	ldi r16,0x64	;write d to display
+	rcall write
+	ldi r16,0x2C	;write , to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	
+	rcall home
+
+	ldi r16,0x61	;write a to display 
+	rcall write
+	ldi r16,0x6C	;write l to the display
+	rcall write
+	ldi r16,0x6C	;write l to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x79	;write y to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x75	;write u to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write
+	ldi r16,0x70	;write p to display
+	rcall write
+	ldi r16,0x6F	;write o to display
+	rcall write
+	ldi r16,0x77	;write w to display
+	rcall write
+	ldi r16,0x65	;write e to display
+	rcall write
+	ldi r16,0x72	;write r to display
+	rcall write
+	ldi r16,0x2E	;write . to display
+	rcall write
+	ldi r16,0x20	;write - to display
+	rcall write	
+	ret
+
+read_time_again:
+	sbi PORTA,5
+	sbi PORTA,6		; disable writing to the LCD display
+	sbi PORTA,7
+;	cbi PORTB,4
+;	cbi PORTB,5	; clear greeting flags PB 4 and PB 5
+;read hours first
+; Set PORT C as input
+; Enable pullup resistors on PORTC
+	ldi	r17,0x00
+	out	DDRC,r17
+	nop
+	nop
+	ldi r17, 0xFF	;activate pull up resistors
+	out PORTC,r17
+	nop
+	nop
+	ldi r16,0xFB	;set address to read HOURS from the clock FB
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		;enable CE of the clock
+	cbi PORTA,3		;enable DATA output of the clock
+	sbi PORTA,4		;enable reading from the clock
+	nop
+	nop
+
+	rcall short_delay
+	rcall short_delay
+	
+	in r22, PINC
+	in r23, PINC
+
+;____________________________________________________________________________________
+		                      ;TEST HOURS
+;	ldi r22,0x23
+;	ldi r23,0x23
+;_____________________________________________________________________________________	 
+	cpi r22,0x05
+	brsh ok_no_flag_a	;SETING UP THE FLAG FOR TIME ZONE DIFERENCE DATE ADJUSTMENT
+	sbi PORTB,7
+;_____________________________________________________________________________________
+ok_no_flag_a:
+ 	;cpi r22,0x17
+	;brsh afternoon
+	;sbi PORTB,5		;set flag for GOOD MORNING
+	nop
+	nop
+;afternoon:
+	;sbis PINB,5	;skip afternoon if morning was activated
+	;sbi PORTB,4		; set flag GOOD AFTERNOON
+;	sbis PINB,7	; skip to clear the flag for zone diference if was activated here
+;	cbi PORTB,7	;clear flag for reading the calendar	
+	sbis PINB,0
+	inc r22
+	sbis PINB,0
+	inc r23
+	cpi r22,0x0A
+	brne ok_19_a
+	ldi r22,0x10
+	ldi r23,0x10
+ok_19_a:
+	cpi r22,0x1A
+	brne ok_24_a
+	ldi r22,0x20
+	ldi r23,0x20
+ok_24_a:
+	cpi r22,0x24
+	brne ok_increment_a			;INCREMENTING THE HOUR FOR DAY LIGHT SAVING TIME
+	ldi r22,0x00
+	ldi r23,0x00
+		
+ok_increment_a:
+;	rcall short_delay
+	rcall short_delay
+	sbi PORTA,2		;disable CE of the clock
+	sbi PORTA,3		;disable DATA output of the clock
+	rcall short_delay
+;rjmp read_time
+;________________________________________________________________________________________
+
+	lsr r22
+	lsr r22
+	lsr r22
+	lsr r22
+	andi r22,0x03
+	ldi r16,0x30
+	or r22,r16
+
+
+
+LSBH_a:	
+;	ldi r16,0x0F
+	andi r23,0x0F
+	ldi r16,0x30
+	or r23,r16
+;********************************from here down reading MINUTES *******************
+
+	sbi PORTA,4		; set clock for WR 1 reading
+	cbi PORTA,2
+	cbi PORTA,3
+	ldi r16,0xFA	;set address to read MINUTES from the clock FA
+	out PORTD,r16
+	nop
+	nop
+	rcall short_delay
+	rcall short_delay
+	cbi PORTA,2		; enable CE 0 for the clock
+	cbi PORTA,3		; enable OE 0 for the clock
+	rcall short_delay	
+	in r24,PINC
+	in r25,PINC
+;			ldi r24,0x44	;&&&&&&&&&&&&&&&&&&        MINUTES TEST &&&&&&&&&&&&&&&&&&&
+;			ldi r25,0x44
+;&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*&&&&&&&&&&
+	rcall short_delay
+	sbi PORTA,2
+	sbi PORTA,3
+;computing for MSBNM
+	ldi r16,0x30
+	lsr r24
+	lsr r24
+	lsr	r24
+	lsr r24
+	or r24,r16
+;computing for LSBM	
+	ldi r16,0x30
+	andi r25,0x0F
+	or r25,r16
+; HERE ENDS READING TIME FROM THE CLOCK
+;	ret
+
+update_clock_a:
+;Set PORT C as output to work with the display
+	sbi PORTA,2
+	sbi PORTA,3		; disable reading from the CLOCK 
+	sbi PORTA,4
+	
+	sbi PORTA,5
+	sbi PORTA,6		; disable writing to the LCD display
+	sbi PORTA,7
+
+	ldi	r17,0xFF
+	out	DDRC,r17
+; Clear PORTC
+	ldi r17, 0x00
+	out PORTC,r17
+;loop:
+;	out PORTC,r23
+
+;	cbi PORTA,6	;Select write to display
+;	cbi PORTA,7	;Enable RS of the display select to low
+
+	rcall short_delay
+	; Set PORT C as output and DATA register
+;	ldi	r17,0xFF
+;	out	DDRC,r17			
+;	rcall short_delay
+	
+
+
+;here enter the time to test the time zone routine
+
+;	ldi r22,0x32 ;load MSB Hour for  bucharest
+;	ldi r23,0x30 ;load LSB Hour for  bucharest
+
+	ldi r26,0x02	;amsterdam counter
+	ldi r27,0x06	;halifax counter
+	ldi r28,0x05	;vancouver counter
+
+;	ldi	r24,0x30 ;load MSB Minutes with 0
+;	ldi r25,0x30 ;load LSB Minutes with 0 
+
+
+
+
+	rcall erase_display
+	rcall write_Bucharest
+
+	rcall write_hours
+
+	ldi r16,0x3A	;write dots: to display
+	rcall write
+
+	rcall write_minutes
+
+	rcall next_line
+	
+	rcall write_Amsterdam
+A_1_a:		
+	dec r26
+	cpi r26,0x00
+	brne adjust_1_1_a
+
+	rcall change_MSBH
+	rcall change_LSBH
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes
+	rcall short_delay
+	rcall home
+	rcall write_Halifax
+H_1_a:		
+	dec r27
+	cpi r27,0x00
+	brne adjust_2_1_a
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+;	cpi r22,0x30
+;	brne next_6
+;	cpi r23,0x30
+;	brne next_6
+;	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by HALIFAX time zone
+
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	rcall change_MSBH
+	rcall change_LSBH
+
+;	rcall greeting
+
+;	rcall time_zone
+
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes	
+	
+	rcall next_line
+
+	rcall write_Coquitlam
+
+V_1_a:		
+	dec r28
+	cpi r28,0x00
+	brne adjust_3_1_a
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++	
+;	cpi r22,0x30
+;	brne next_6
+;	cpi r23,0x30
+;	brne next_6
+;	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by Coquitlam time zone
+;next_6:
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++	
+	rcall change_MSBH
+	rcall change_LSBH
+
+	ldi r16,0x3A	;write 2 dots to the display
+	rcall write
+
+	rcall write_minutes
+	rcall short_delay
+	rcall home
+	ret
+
+
+
+adjust_1_1_a:
+rjmp adjust_1_a
+
+adjust_2_1_a:
+rjmp adjust_2_a
+
+adjust_3_1_a:
+	rjmp adjust_3_a
+;greeting:
+;	cpi r22,0x31	;test for 12 a clock to change greeting from morning to afternoon
+;	brlo next_6
+;	cpi r23,0x32
+;	brlo next_6
+;	sbi PORTB,4
+;next_6:
+;	ret
+;time_zone:
+;	cpi r22,0x30
+;	brne next_16
+;	cpi r23,0x30
+;	brne next_16
+;	cbi PORTB,7		;CLEAR flag for DATE zone adjustment PB 7 by Coquitlam time zone
+;	cbi PORTB,4		;clear flag for afternoon greeting
+;next_16:
+;	ret
+
+
+next_1_a:
+	cpi r22,0x32
+	breq d_LSBH_a
+	cpi r22,0x31
+	breq d_LSBH_1_a
+;d_LSBH:
+	dec r23
+	rjmp A_1_a
+adjust_1_a:
+	cpi r23,0x30
+	breq t_HSBH_a
+	rjmp next_1_a
+t_HSBH_a:
+	cpi r22,0x30
+	breq LSBH_39_24_a
+	cpi r22,0x31
+	breq d_MSBH_a
+	cpi r22,0x32
+	breq LSBH_39_d_a
+
+   
+LSBH_34_a:
+	cpi r23,0x34
+	brne d_LSBH_a
+LSBH_39_a:
+	ldi r22,0x32
+LSBH_39_d_a:
+	ldi r23,0x39
+	dec r22
+	rjmp A_1_a 
+d_LSBH_a:
+	dec r23
+	rjmp A_1_a
+d_MSBH_a:
+	dec r22
+	ldi r23,0x39
+	rjmp A_1_a
+LSBH_39_24_a:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp A_1_a
+d_LSBH_1_a:
+	dec r23
+	rjmp A_1_a
+
+next_2_a:
+	cpi r22,0x32
+	breq d_LSBH_2_a
+	cpi r22,0x31
+	breq d_LSBH_2_a
+;d_LSBH:
+	dec r23
+	rjmp H_1_a
+adjust_2_a:
+	cpi r23,0x30
+	breq t_HSBH_2_a
+	rjmp next_2_a
+t_HSBH_2_a:
+	cpi r22,0x30
+	breq LSBH_39_24_2_a
+	cpi r22,0x32
+	breq LSBH_39_d_2_a
+	cpi r22,0x31
+	breq d_MSBH_2_a
+   
+LSBH_34_2_a:
+	cpi r23,0x34
+	brne d_LSBH_2_a
+LSBH_39_2_a:
+	ldi r22,0x32
+LSBH_39_d_2_a:
+	ldi r23,0x39
+	dec r22
+	rjmp H_1_a 
+d_LSBH_2_a:
+	dec r23
+	rjmp H_1_a
+d_MSBH_2_a:
+	ldi r23,0x39
+	dec r22
+	rjmp H_1
+LSBH_39_24_2_a:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp H_1_a
+
+
+V_1_1_a:
+	rjmp V_1_a
+
+next_3_a:
+	cpi r22,0x32
+	breq d_LSBH_3_a
+	cpi r22,0x31
+	breq d_LSBH_3_a
+;d_LSBH:
+	dec r23
+	rjmp V_1_a
+adjust_3_a:
+	cpi r23,0x30
+	breq t_HSBH_3_a
+	rjmp next_3_a
+t_HSBH_3_a:
+	cpi r22,0x30
+	breq LSBH_39_24_3_a
+	cpi r22,0x32
+	breq LSBH_39_d_3_a
+	cpi r22,0x31
+	breq LSBH_39_d_3_a
+   
+LSBH_34_3_a:
+	cpi r23,0x34
+	brne d_LSBH_3_a
+LSBH_39_3_a:
+	ldi r22,0x32
+LSBH_39_d_3_a:
+	ldi r23,0x39
+	dec r22
+	rjmp V_1_a 
+d_LSBH_3_a:
+	dec r23
+	rjmp V_1_a
+d_MSBH_3_a:
+	dec r22
+	rjmp V_1_a
+LSBH_39_24_3_a:
+	ldi r23,0x34
+	ldi r22,0x32
+	dec r23
+	rjmp V_1_a
+
+
+
+
